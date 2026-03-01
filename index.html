@@ -710,6 +710,8 @@
         const ESPN = 'https://site.api.espn.com/apis/site/v2/sports/basketball/nba';
         const ESPN_WEB = 'https://site.web.api.espn.com/apis/site/v2/sports/basketball/nba';
         const PROXY = 'https://api.allorigins.win/raw?url=';
+        const SPURS_ID = '24';
+        const TRACKED_IDS = [TEAM_ID, SPURS_ID];
 
         // ===== TAB NAVIGATION =====
         const tabBtns = document.querySelectorAll('.tab-btn');
@@ -795,6 +797,90 @@
                     </div>
                     <div style="font-size:0.8rem;color:var(--text-secondary);margin-top:0.75rem;">Seite neu laden f\u00fcr Live-Score</div>
                 </div>`;
+        }
+
+        // ===== LIVE SCORES (Lakers & Spurs) =====
+        let liveCheckInterval = null;
+
+        async function checkLiveScores() {
+            try {
+                const data = await espnFetch(`${ESPN}/scoreboard`);
+                const liveGames = [];
+                for (const ev of (data.events || [])) {
+                    const comp = ev.competitions?.[0];
+                    if (!comp) continue;
+                    const st = comp.status?.type?.name || '';
+                    if (st !== 'STATUS_IN_PROGRESS' && st !== 'STATUS_HALFTIME') continue;
+                    const home = comp.competitors?.find(c => c.homeAway === 'home');
+                    const away = comp.competitors?.find(c => c.homeAway === 'away');
+                    if (!home || !away) continue;
+                    if (TRACKED_IDS.includes(home.team?.id) || TRACKED_IDS.includes(away.team?.id)) {
+                        liveGames.push({
+                            homeId: home.team?.id,
+                            homeAbbr: home.team?.abbreviation || '?',
+                            homeName: home.team?.displayName || '?',
+                            homeScore: home.score || '0',
+                            awayId: away.team?.id,
+                            awayAbbr: away.team?.abbreviation || '?',
+                            awayName: away.team?.displayName || '?',
+                            awayScore: away.score || '0',
+                            detail: comp.status?.type?.shortDetail || 'Live',
+                        });
+                    }
+                }
+                renderLiveScores(liveGames);
+            } catch (e) {
+                console.error('Live-Score Fehler:', e);
+            }
+        }
+
+        function renderLiveScores(liveGames) {
+            const timer = document.querySelector('.countdown-timer');
+            const label = document.querySelector('.countdown-label');
+            const matchup = document.querySelector('.countdown-matchup');
+            const info = document.getElementById('next-game-info');
+
+            if (!liveGames.length) {
+                if (liveCheckInterval) {
+                    clearInterval(liveCheckInterval);
+                    liveCheckInterval = null;
+                    location.reload();
+                }
+                return;
+            }
+
+            isLive = true;
+            if (countdownInterval) { clearInterval(countdownInterval); countdownInterval = null; }
+            label.textContent = 'Live Scores';
+            matchup.style.display = 'none';
+            info.innerHTML = '<span style="color:var(--text-muted);font-size:0.75rem;">Aktualisiert alle 30 Sekunden</span>';
+
+            let html = '<div style="display:flex;flex-direction:column;gap:1rem;align-items:center;width:100%;">';
+            for (const g of liveGames) {
+                html += `<div style="background:rgba(20,20,20,0.8);border:1px solid rgba(253,185,39,0.2);border-radius:12px;padding:1.25rem 1.5rem;width:100%;max-width:480px;position:relative;">
+                    <div style="position:absolute;top:-9px;left:50%;transform:translateX(-50%);background:var(--win);color:#000;font-size:0.6rem;font-weight:800;padding:2px 10px;border-radius:8px;letter-spacing:0.12em;">LIVE</div>
+                    <div style="display:flex;align-items:center;justify-content:center;gap:1rem;">
+                        <div style="text-align:center;flex:1;">
+                            <img src="${teamLogoUrl(g.awayId)}" alt="${g.awayAbbr}" style="width:44px;height:44px;object-fit:contain;" onerror="this.style.display='none'">
+                            <div style="font-size:0.7rem;color:var(--text-secondary);margin-top:0.25rem;">${g.awayAbbr}</div>
+                        </div>
+                        <div style="text-align:center;min-width:110px;">
+                            <div style="font-size:2.2rem;font-weight:900;color:var(--accent);animation:pulse-glow 2s ease-in-out infinite;">${g.awayScore} - ${g.homeScore}</div>
+                            <div style="font-size:0.75rem;color:var(--text-secondary);margin-top:0.25rem;">${g.detail}</div>
+                        </div>
+                        <div style="text-align:center;flex:1;">
+                            <img src="${teamLogoUrl(g.homeId)}" alt="${g.homeAbbr}" style="width:44px;height:44px;object-fit:contain;" onerror="this.style.display='none'">
+                            <div style="font-size:0.7rem;color:var(--text-secondary);margin-top:0.25rem;">${g.homeAbbr}</div>
+                        </div>
+                    </div>
+                </div>`;
+            }
+            html += '</div>';
+            timer.innerHTML = html;
+
+            if (!liveCheckInterval) {
+                liveCheckInterval = setInterval(checkLiveScores, 30000);
+            }
         }
 
         // Parse schedule into upcoming, completed, and live
@@ -1501,9 +1587,11 @@
             renderSchedule(upcoming);
             renderResults(completed);
 
-            if (live.length) setupCountdown(upcoming[0], live[0]);
-            else if (upcoming.length) setupCountdown(upcoming[0], null);
+            if (upcoming.length) setupCountdown(upcoming[0], null);
             else document.getElementById('next-game-info').textContent = 'Kein Spiel geplant';
+
+            // Live Score Checking f\u00fcr Lakers & Spurs
+            checkLiveScores();
 
             // Load injury report, standings, and player stats in parallel
             const [statsResult, standingsResult] = await Promise.all([
